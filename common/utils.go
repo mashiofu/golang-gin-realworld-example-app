@@ -39,9 +39,8 @@ func RandInt() int {
 	return int(randNum.Int64())
 }
 
-// Keep this two config private, it should not expose to open source
-const JWTSecret = "A String Very Very Very Strong!!@##$!@#$"      // #nosec G101
-const RandomPassword = "A String Very Very Very Random!!@##$!@#4" // #nosec G101
+// Keep this config private, it should not expose to open source
+const JWTSecret = "A String Very Very Very Strong!!@##$!@#$" // #nosec G101
 
 // A Util function to generate jwt_token which can be used in the request header
 func GenToken(id uint) string {
@@ -109,6 +108,16 @@ func NewValidatorError(err error) CommonError {
 		res.Errors[field] = append(res.Errors[field], errorMessageForTag(v))
 	}
 	return res
+}
+
+// MarkInvalidFields overrides the messages of the given fields with
+// "is invalid". Wrong-JSON-type values on Nullable fields are collapsed to
+// blank/null by the valuer, so without this the binding tags would report
+// them as "can't be blank" / "can't be null".
+func (e CommonError) MarkInvalidFields(fields []string) {
+	for _, field := range fields {
+		e.Errors[field] = []string{"is invalid"}
+	}
 }
 
 // Wrap the error info in an object

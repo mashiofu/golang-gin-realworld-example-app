@@ -237,7 +237,10 @@ func FindManyArticle(tag, author, limit, offset, favorited string) ([]ArticleMod
 		return models, 0, err
 	}
 
-	fetchQuery, _ := buildQuery()
+	fetchQuery, ok := buildQuery()
+	if !ok {
+		return models, 0, nil
+	}
 	err := fetchQuery.
 		Preload("Author.UserModel").Preload("Tags").
 		Order("article_models.created_at DESC").

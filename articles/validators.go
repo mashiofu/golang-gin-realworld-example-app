@@ -27,17 +27,6 @@ func NewArticleModelValidator() ArticleModelValidator {
 	return ArticleModelValidator{}
 }
 
-func NewArticleModelValidatorFillWith(articleModel ArticleModel) ArticleModelValidator {
-	articleModelValidator := NewArticleModelValidator()
-	articleModelValidator.Article.Title = articleModel.Title
-	articleModelValidator.Article.Description = articleModel.Description
-	articleModelValidator.Article.Body = articleModel.Body
-	for _, tagModel := range articleModel.Tags {
-		articleModelValidator.Article.Tags = append(articleModelValidator.Article.Tags, tagModel.Tag)
-	}
-	return articleModelValidator
-}
-
 func (s *ArticleModelValidator) Bind(c *gin.Context) error {
 	myUserModel := c.MustGet("my_user_model").(users.UserModel)
 
@@ -74,6 +63,25 @@ func NewArticleUpdateValidator() ArticleUpdateValidator {
 
 func (s *ArticleUpdateValidator) Bind(c *gin.Context) error {
 	return common.Bind(c, s)
+}
+
+// invalidFields lists request fields whose JSON value had the wrong type;
+// see UserUpdateValidator.invalidFields in the users package.
+func (s *ArticleUpdateValidator) invalidFields() []string {
+	fields := []string{}
+	if s.Article.Title.IsInvalid() {
+		fields = append(fields, "title")
+	}
+	if s.Article.Description.IsInvalid() {
+		fields = append(fields, "description")
+	}
+	if s.Article.Body.IsInvalid() {
+		fields = append(fields, "body")
+	}
+	if s.Article.TagList.IsInvalid() {
+		fields = append(fields, "tagList")
+	}
+	return fields
 }
 
 type CommentModelValidator struct {

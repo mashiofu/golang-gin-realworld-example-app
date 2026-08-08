@@ -1662,5 +1662,14 @@ func TestArticleUpdateTagListSemantics(t *testing.T) {
 	// Explicit null is rejected
 	w = doPut(`{"article":{"tagList":null}}`)
 	asserts.Equal(http.StatusUnprocessableEntity, w.Code, "null tagList should be rejected")
-	asserts.Contains(w.Body.String(), `"tagList"`)
+	asserts.Contains(w.Body.String(), `"tagList":["can't be null"]`)
+
+	// Wrong-typed fields are reported as invalid, not blank/null
+	w = doPut(`{"article":{"title":123}}`)
+	asserts.Equal(http.StatusUnprocessableEntity, w.Code, "non-string title should be rejected")
+	asserts.Contains(w.Body.String(), `"title":["is invalid"]`)
+
+	w = doPut(`{"article":{"tagList":["ok",1]}}`)
+	asserts.Equal(http.StatusUnprocessableEntity, w.Code, "mixed-type tagList should be rejected")
+	asserts.Contains(w.Body.String(), `"tagList":["is invalid"]`)
 }

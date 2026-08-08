@@ -1,13 +1,22 @@
 #!/usr/bin/env bash
-# Runs the RealWorld API spec test suite (Hurl flavor) against this backend.
-# Specs live in https://github.com/realworld-apps/realworld under specs/api/hurl.
+# Runs the RealWorld API spec test suite against this backend.
+# Specs live in https://github.com/realworld-apps/realworld under specs/api;
+# the Hurl suite is the source of truth, the Bruno collection is generated from it.
 #
-# Usage: bash ./scripts/run-hurl-tests.sh
-# Requires: go, curl, hurl (https://hurl.dev)
+# Usage: bash ./scripts/run-spec-tests.sh <hurl|bruno>
+# Requires: go, curl, plus hurl (https://hurl.dev) for the hurl flavor,
+# or node/npx/bun (or a globally installed @usebruno/cli) for the bruno flavor.
 set -euo pipefail
+
+FLAVOR="${1:-}"
+case "$FLAVOR" in
+    hurl|bruno) ;;
+    *) echo "usage: bash ./scripts/run-spec-tests.sh <hurl|bruno>" >&2; exit 2 ;;
+esac
 
 PORT="${PORT:-8080}"
 HOST="${HOST:-http://localhost:$PORT}"
+BRUNO_SANDBOX="${BRUNO_SANDBOX:-safe}"
 
 # Pinned spec version (commit in realworld-apps/realworld) and the sha256 of
 # its source tarball. Bump both together when adopting a newer spec.
@@ -72,9 +81,34 @@ for _ in {1..30}; do
     sleep 1
 done
 
-echo "Running Hurl API spec tests against $HOST..."
-hurl --test \
-  --jobs 1 \
-  --variable "host=$HOST" \
-  --variable "uid=$(date +%s)$$" \
-  "$SPECS_DIR"/hurl/*.hurl
+case "$FLAVOR" in
+hurl)
+    echo "Running Hurl API spec tests against $HOST..."
+    hurl --test \
+      --jobs 1 \
+      --variable "host=$HOST" \
+      --variable "uid=$(date +%s)$$" \
+      "$SPECS_DIR"/hurl/*.hurl
+    ;;
+bruno)
+    if command -v bru &> /dev/null; then
+        BRU=(bru)
+    elif command -v npx &> /dev/null; then
+        BRU=(npx --yes @usebruno/cli)
+    elif command -v bun &> /dev/null; then
+        BRU=(bun x @usebruno/cli)
+    else
+        echo "error: need bru, npx or bun to run the Bruno CLI" >&2
+        exit 1
+    fi
+
+    cd "$SPECS_DIR/bruno"
+    for entry in */; do
+        folder="${entry%/}"
+        [ "$folder" = "environments" ] && continue
+        echo ""
+        echo "--- ${BRU[*]} run $folder ---"
+        "${BRU[@]}" run "$folder" --env local --env-var "host=$HOST" --sandbox "$BRUNO_SANDBOX"
+    done
+    ;;
+esac

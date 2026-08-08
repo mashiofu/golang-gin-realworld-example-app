@@ -117,14 +117,16 @@ jobs:
 
     - name: Install Hurl
       run: |
-        curl -sSL https://github.com/Orange-OpenSource/hurl/releases/download/8.0.1/hurl-8.0.1-x86_64-unknown-linux-gnu.tar.gz | tar xz
+        curl -sSL -o hurl.tar.gz https://github.com/Orange-OpenSource/hurl/releases/download/8.0.1/hurl-8.0.1-x86_64-unknown-linux-gnu.tar.gz
+        echo "cac7c4670d69444db120edb21fe06c97ba8c80dcc52279957c8dd18f05fb0c06  hurl.tar.gz" | sha256sum -c -
+        tar xzf hurl.tar.gz
         echo "$PWD/hurl-8.0.1-x86_64-unknown-linux-gnu/bin" >> "$GITHUB_PATH"
 
     - name: Get dependencies
       run: go mod download
 
     - name: Run Hurl API spec tests
-      run: bash ./scripts/run-hurl-tests.sh
+      run: bash ./scripts/run-spec-tests.sh hurl
 
   bruno-api-test:
     name: API Spec Test (Bruno)
@@ -154,4 +156,4 @@ jobs:
       run: go mod download
 
     - name: Run Bruno API spec tests
-      run: bash ./scripts/run-bruno-tests.sh
+      run: bash ./scripts/run-spec-tests.sh bruno

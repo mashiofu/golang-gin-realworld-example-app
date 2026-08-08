@@ -41,6 +41,12 @@ func (n *Nullable[T]) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// IsInvalid reports whether the key was present but its value not decodable
+// into T (wrong JSON type).
+func (n Nullable[T]) IsInvalid() bool {
+	return n.Set && n.Invalid
+}
+
 // nullMarker is what the valuer projects an explicit JSON null onto for
 // slice-backed Nullable fields. A nil slice cannot represent null there:
 // "omitnil" would skip it (nil slices count as absent) and an empty slice is

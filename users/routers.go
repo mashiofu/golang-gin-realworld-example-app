@@ -1,10 +1,12 @@
 package users
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gothinkster/golang-gin-realworld-example-app/common"
+	"gorm.io/gorm"
 )
 
 func UsersRegister(router *gin.RouterGroup) {
@@ -92,6 +94,18 @@ func UsersRegistration(c *gin.Context) {
 	}
 
 	if err := SaveOne(&userModelValidator.userModel); err != nil {
+		// The pre-checks above race with concurrent registrations; the unique
+		// constraints are the real guarantee, so their violation is a 409 too.
+		// The translated sentinel carries no column info, so re-query to
+		// attribute the conflict (username first, mirroring the pre-checks).
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			field := "email"
+			if _, uerr := FindOneUser(&UserModel{Username: userModelValidator.userModel.Username}); uerr == nil {
+				field = "username"
+			}
+			c.JSON(http.StatusConflict, common.NewErrorMessage(field, "has already been taken"))
+			return
+		}
 		c.JSON(http.StatusUnprocessableEntity, common.NewError("database", err))
 		return
 	}
@@ -134,10 +148,16 @@ func UserUpdate(c *gin.Context) {
 	myUserModel := c.MustGet("my_user_model").(UserModel)
 	userUpdateValidator := NewUserUpdateValidator()
 	if err := userUpdateValidator.Bind(c); err != nil {
-		c.JSON(http.StatusUnprocessableEntity, common.NewValidatorError(err))
+		errs := common.NewValidatorError(err)
+		errs.MarkInvalidFields(userUpdateValidator.invalidFields())
+		c.JSON(http.StatusUnprocessableEntity, errs)
 		return
 	}
-	if errs := userUpdateValidator.InvalidFieldErrors(); len(errs.Errors) > 0 {
+	// Wrong-typed bio/image pass binding (tag-free fields accept the collapsed
+	// zero value), so they need an explicit rejection.
+	if fields := userUpdateValidator.invalidFields(); len(fields) > 0 {
+		errs := common.CommonError{Errors: map[string][]string{}}
+		errs.MarkInvalidFields(fields)
 		c.JSON(http.StatusUnprocessableEntity, errs)
 		return
 	}

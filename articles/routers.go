@@ -43,9 +43,18 @@ func ArticleCreate(c *gin.Context) {
 		return
 	}
 	// Duplicate titles are allowed; each article still needs a unique slug.
-	articleModelValidator.articleModel.Slug = makeUniqueSlug(articleModelValidator.articleModel.Slug)
-
-	if err := SaveOne(&articleModelValidator.articleModel); err != nil {
+	// makeUniqueSlug races with concurrent creates of the same title, so on a
+	// unique-index violation regenerate and retry a couple of times.
+	baseSlug := articleModelValidator.articleModel.Slug
+	for attempt := 0; ; attempt++ {
+		articleModelValidator.articleModel.Slug = makeUniqueSlug(baseSlug)
+		err := SaveOne(&articleModelValidator.articleModel)
+		if err == nil {
+			break
+		}
+		if attempt < 2 && errors.Is(err, gorm.ErrDuplicatedKey) {
+			continue
+		}
 		c.JSON(http.StatusUnprocessableEntity, common.NewError("database", err))
 		return
 	}
@@ -118,7 +127,9 @@ func ArticleUpdate(c *gin.Context) {
 
 	articleUpdateValidator := NewArticleUpdateValidator()
 	if err := articleUpdateValidator.Bind(c); err != nil {
-		c.JSON(http.StatusUnprocessableEntity, common.NewValidatorError(err))
+		errs := common.NewValidatorError(err)
+		errs.MarkInvalidFields(articleUpdateValidator.invalidFields())
+		c.JSON(http.StatusUnprocessableEntity, errs)
 		return
 	}
 	// Past validation, every Set field holds a valid value.
@@ -140,14 +151,26 @@ func ArticleUpdate(c *gin.Context) {
 
 	// Changing the title regenerates the slug, as in the original RealWorld backends.
 	finalSlug := slug
+	newSlugBase := ""
 	if title, ok := updates["title"]; ok {
-		if newSlugBase := makeSlug(title.(string)); newSlugBase != articleModel.Slug {
-			finalSlug = makeUniqueSlug(newSlugBase)
+		if base := makeSlug(title.(string)); base != articleModel.Slug {
+			newSlugBase = base
+			finalSlug = makeUniqueSlug(base)
 			updates["slug"] = finalSlug
 		}
 	}
 	if len(updates) > 0 {
-		if err := articleModel.Update(updates); err != nil {
+		// Same slug race as on create: regenerate and retry on collision.
+		for attempt := 0; ; attempt++ {
+			err := articleModel.Update(updates)
+			if err == nil {
+				break
+			}
+			if attempt < 2 && newSlugBase != "" && errors.Is(err, gorm.ErrDuplicatedKey) {
+				finalSlug = makeUniqueSlug(newSlugBase)
+				updates["slug"] = finalSlug
+				continue
+			}
 			c.JSON(http.StatusUnprocessableEntity, common.NewError("database", err))
 			return
 		}

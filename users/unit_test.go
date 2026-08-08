@@ -581,6 +581,10 @@ func TestUserUpdateNullAndBlankSemantics(t *testing.T) {
 	asserts.Equal(http.StatusUnprocessableEntity, w.Code, "null username should be rejected")
 	asserts.Contains(w.Body.String(), `"username":["can't be blank"]`)
 
+	w = doPut(`{"user":{"email":"not-an-email"}}`)
+	asserts.Equal(http.StatusUnprocessableEntity, w.Code, "malformed email should be rejected")
+	asserts.Contains(w.Body.String(), `"email":["is invalid"]`)
+
 	w = doPut(`{"user":{"password":""}}`)
 	asserts.Equal(http.StatusUnprocessableEntity, w.Code, "blank password should be rejected")
 	asserts.Contains(w.Body.String(), `"password":["can't be blank"]`)
@@ -601,6 +605,16 @@ func TestUserUpdateNullAndBlankSemantics(t *testing.T) {
 	w = doPut(`{"user":{"image":[1]}}`)
 	asserts.Equal(http.StatusUnprocessableEntity, w.Code, "non-string image should be rejected")
 	asserts.Contains(w.Body.String(), `"image":["is invalid"]`)
+
+	w = doPut(`{"user":{"username":123}}`)
+	asserts.Equal(http.StatusUnprocessableEntity, w.Code, "non-string username should be rejected")
+	asserts.Contains(w.Body.String(), `"username":["is invalid"]`)
+
+	// A wrong-typed field is reported as invalid alongside other field errors
+	w = doPut(`{"user":{"email":null,"bio":123}}`)
+	asserts.Equal(http.StatusUnprocessableEntity, w.Code, "null email with invalid bio should be rejected")
+	asserts.Contains(w.Body.String(), `"email":["can't be blank"]`)
+	asserts.Contains(w.Body.String(), `"bio":["is invalid"]`)
 
 	w = doPut(`{"user":`)
 	asserts.Equal(http.StatusUnprocessableEntity, w.Code, "malformed JSON should be rejected")
