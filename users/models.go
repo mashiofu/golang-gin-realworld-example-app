@@ -96,15 +96,6 @@ func SaveOne(data interface{}) error {
 	return err
 }
 
-// You could update properties of an UserModel to database returning with error info.
-//
-//	err := db.Model(userModel).Updates(UserModel{Username: "wangzitian0"}).Error
-func (model *UserModel) Update(data interface{}) error {
-	db := common.GetDB()
-	err := db.Model(model).Updates(data).Error
-	return err
-}
-
 // You could add a following relationship as userModel1 following userModel2
 //
 //	err = userModel1.following(userModel2)

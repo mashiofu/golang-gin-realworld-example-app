@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gothinkster/golang-gin-realworld-example-app/common"
 	"github.com/stretchr/testify/assert"
 	"gorm.io/gorm"
@@ -654,5 +655,151 @@ func TestUsersRegistrationDuplicateEmail(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	asserts.Equal(http.StatusConflict, w.Code, "duplicate email should return 409")
+	asserts.Contains(w.Body.String(), `"email":["has already been taken"]`)
+}
+
+func TestUsersRegistrationWithImage(t *testing.T) {
+	asserts := assert.New(t)
+
+	r := gin.New()
+	UsersRegister(r.Group("/users"))
+	resetDBWithMock()
+
+	req, _ := http.NewRequest("POST", "/users", bytes.NewBufferString(
+		`{"user":{"username":"imageuser","email":"imageuser@example.com","password":"password123","image":"http://image/profile.jpg"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	asserts.Equal(http.StatusCreated, w.Code, "registration with an image should succeed")
+	userModel, err := FindOneUser(&UserModel{Username: "imageuser"})
+	asserts.NoError(err)
+	asserts.NotNil(userModel.Image)
+	asserts.Equal("http://image/profile.jpg", *userModel.Image)
+}
+
+func TestUsersRegistrationOverlongPasswordRejected(t *testing.T) {
+	asserts := assert.New(t)
+
+	r := gin.New()
+	UsersRegister(r.Group("/users"))
+	resetDBWithMock()
+
+	// bcrypt rejects passwords longer than 72 bytes; the error must surface
+	// as a 422 instead of silently storing an unusable hash.
+	password := string(bytes.Repeat([]byte("a"), 100))
+	req, _ := http.NewRequest("POST", "/users", bytes.NewBufferString(fmt.Sprintf(
+		`{"user":{"username":"longpwuser","email":"longpw@example.com","password":"%s"}}`, password)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	asserts.Equal(http.StatusUnprocessableEntity, w.Code, "over-72-byte password should be rejected")
+	asserts.Contains(w.Body.String(), `"body":["is invalid"]`)
+	_, err := FindOneUser(&UserModel{Username: "longpwuser"})
+	asserts.Error(err, "no user should be created")
+}
+
+func TestUserUpdateWrongTypedIdentityFields(t *testing.T) {
+	asserts := assert.New(t)
+
+	r := gin.New()
+	r.Use(AuthMiddleware(true))
+	UserRegister(r.Group("/user"))
+	resetDBWithMock()
+
+	doPut := func(body string) *httptest.ResponseRecorder {
+		req, _ := http.NewRequest("PUT", "/user", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		common.HeaderTokenMock(req, 1)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	w := doPut(`{"user":{"email":123}}`)
+	asserts.Equal(http.StatusUnprocessableEntity, w.Code, "non-string email should be rejected")
+	asserts.Contains(w.Body.String(), `"email":["is invalid"]`)
+
+	w = doPut(`{"user":{"password":123}}`)
+	asserts.Equal(http.StatusUnprocessableEntity, w.Code, "non-string password should be rejected")
+	asserts.Contains(w.Body.String(), `"password":["is invalid"]`)
+}
+
+func TestUserUpdateOverlongPasswordRejected(t *testing.T) {
+	asserts := assert.New(t)
+
+	r := gin.New()
+	r.Use(AuthMiddleware(true))
+	UserRegister(r.Group("/user"))
+	resetDBWithMock()
+
+	// Long enough for the binding tags (max=255) but over bcrypt's 72-byte cap
+	password := string(bytes.Repeat([]byte("a"), 100))
+	req, _ := http.NewRequest("PUT", "/user", bytes.NewBufferString(fmt.Sprintf(
+		`{"user":{"password":"%s"}}`, password)))
+	req.Header.Set("Content-Type", "application/json")
+	common.HeaderTokenMock(req, 1)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	asserts.Equal(http.StatusUnprocessableEntity, w.Code, "over-72-byte password should be rejected")
+	asserts.Contains(w.Body.String(), `"password"`)
+}
+
+func TestAuthMiddlewareRejectsNonHMACToken(t *testing.T) {
+	asserts := assert.New(t)
+
+	r := gin.New()
+	r.Use(AuthMiddleware(true))
+	UserRegister(r.Group("/user"))
+	resetDBWithMock()
+
+	// An unsigned ("none" algorithm) token must not pass the HMAC check
+	token := jwt.NewWithClaims(jwt.SigningMethodNone, jwt.MapClaims{"id": 1})
+	tokenString, err := token.SignedString(jwt.UnsafeAllowNoneSignatureType)
+	asserts.NoError(err)
+
+	req, _ := http.NewRequest("GET", "/user", nil)
+	req.Header.Set("Authorization", "Token "+tokenString)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	asserts.Equal(http.StatusUnauthorized, w.Code, "non-HMAC token should be rejected")
+}
+
+// Simulates the registration race deterministically: a one-shot gorm callback
+// plays the concurrent request by inserting a conflicting email right before
+// the handler's own INSERT runs, after the pre-checks have already passed.
+func TestUsersRegistrationEmailRaceConflict(t *testing.T) {
+	asserts := assert.New(t)
+
+	r := gin.New()
+	UsersRegister(r.Group("/users"))
+	resetDBWithMock()
+
+	db := common.GetDB()
+	raced := false
+	err := db.Callback().Create().Before("gorm:create").Register("test:email_race", func(tx *gorm.DB) {
+		if raced {
+			return
+		}
+		if _, ok := tx.Statement.Dest.(*UserModel); !ok {
+			return
+		}
+		raced = true
+		tx.Session(&gorm.Session{NewDB: true}).Exec("INSERT INTO user_models (username, email, bio, password) VALUES (?, ?, ?, ?)",
+			"racewinner", "raced@example.com", "", "hash")
+	})
+	asserts.NoError(err)
+	defer db.Callback().Create().Remove("test:email_race")
+
+	req, _ := http.NewRequest("POST", "/users", bytes.NewBufferString(
+		`{"user":{"username":"raceloser","email":"raced@example.com","password":"password123"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	asserts.True(raced, "the simulated concurrent insert should have run")
+	asserts.Equal(http.StatusConflict, w.Code, "losing the insert race should return 409")
 	asserts.Contains(w.Body.String(), `"email":["has already been taken"]`)
 }
