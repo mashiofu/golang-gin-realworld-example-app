@@ -9,6 +9,11 @@ name: CD
 on:
   push:
     branches: [main]
+  # Lets docs/DEPLOYMENT.md's step 8 (`gh workflow run cd.yml`) actually
+  # work for the "code was already on GitHub before infra existed"
+  # case, where the original push-triggered run failed before the `dev`
+  # GitHub Environment existed and won't retry on its own.
+  workflow_dispatch:
 
 permissions:
   id-token: write
