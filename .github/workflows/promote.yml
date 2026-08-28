@@ -1,0 +1,54 @@
+name: Promote
+
+# Manually triggered: copies an image tag that's already running in dev
+# into staging's or prod's own ECR repo (docker buildx imagetools create
+# re-tags at the registry level - no rebuild, no local pull of layers
+# already present in ECR) and deploys it there. The artifact that reaches
+# prod is byte-identical to what ran in dev.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_environment:
+        description: "Environment to promote into"
+        required: true
+        type: choice
+        options: [staging, prod]
+      image_tag:
+        description: "Image tag currently running in dev (e.g. sha-abc123def456)"
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    # The approval gate for prod promotions - see this repo's "prod"
+    # Environment protection rules, and terraform/live/main.tf's
+    # env_config.prod.github_environment on the AWS/OIDC side.
+    environment: ${{ inputs.target_environment }}
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Copy dev's image into ${{ inputs.target_environment }}'s ECR repo
+        run: |
+          docker buildx imagetools create \
+            --tag "${{ vars.ECR_REPOSITORY_URL }}:${{ inputs.image_tag }}" \
+            "${{ vars.ECR_REPOSITORY_URL_DEV }}:${{ inputs.image_tag }}"
+
+      - name: Trigger deploy in conduit-platform
+        env:
+          GH_TOKEN: ${{ secrets.PLATFORM_DISPATCH_TOKEN }}
+        run: |
+          printf '{"event_type":"backend-deploy","client_payload":{"environment":"%s","image_tag":"%s"}}' \
+            "${{ inputs.target_environment }}" "${{ inputs.image_tag }}" \
+            | gh api "repos/${{ vars.PLATFORM_REPO }}/dispatches" --input -

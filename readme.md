@@ -1,3 +1,5 @@
+> **This fork** deploys this backend to AWS EKS as part of a DevOps take-home platform - see [conduit-platform](https://github.com/mashiofu/conduit-platform) for the Terraform/Helm/CI-CD that builds around it, and `docs/design-decisions.md` there for the specific changes made in this fork (Postgres support, env-configurable JWT secret, Prometheus metrics, a Redis read-through cache). Everything below this line is the original upstream README.
+
 # ![RealWorld Example App](logo.png)
 
 

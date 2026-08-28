@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -45,24 +47,47 @@ func ensureDir(filePath string) error {
 	return nil
 }
 
-// Opening a database and save the reference to `Database` struct.
+// Init opens a database connection and saves the reference to the
+// package-level DB variable.
+//
+// If DATABASE_URL is set (e.g. "postgres://user:pass@host:5432/dbname?sslmode=require"),
+// it connects to PostgreSQL - this is the path used in Docker Compose/EKS,
+// backed by RDS in the real deployment. Otherwise it falls back to a local
+// SQLite file, so `go run hello.go` still works out of the box with zero
+// setup for anyone cloning the repo. Unit tests always use TestDBInit below
+// (SQLite), independent of this switch, to stay fast and hermetic.
 func Init() *gorm.DB {
-	dbPath := GetDBPath()
+	databaseURL := os.Getenv("DATABASE_URL")
 
-	// Ensure the directory exists
-	if err := ensureDir(dbPath); err != nil {
-		fmt.Println("db err: (Init - create dir) ", err)
+	var db *gorm.DB
+	var err error
+
+	if databaseURL != "" {
+		db, err = gorm.Open(postgres.Open(databaseURL), &gorm.Config{})
+		if err != nil {
+			fmt.Println("db err: (Init - postgres) ", err)
+		}
+	} else {
+		dbPath := GetDBPath()
+
+		// Ensure the directory exists
+		if dirErr := ensureDir(dbPath); dirErr != nil {
+			fmt.Println("db err: (Init - create dir) ", dirErr)
+		}
+
+		db, err = gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
+		if err != nil {
+			fmt.Println("db err: (Init) ", err)
+		}
 	}
 
-	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
-	if err != nil {
-		fmt.Println("db err: (Init) ", err)
-	}
-	sqlDB, err := db.DB()
-	if err != nil {
-		fmt.Println("db err: (Init - get sql.DB) ", err)
+	sqlDB, sqlErr := db.DB()
+	if sqlErr != nil {
+		fmt.Println("db err: (Init - get sql.DB) ", sqlErr)
 	} else {
 		sqlDB.SetMaxIdleConns(10)
+		sqlDB.SetMaxOpenConns(50)
+		sqlDB.SetConnMaxLifetime(5 * time.Minute)
 	}
 	DB = db
 	return DB

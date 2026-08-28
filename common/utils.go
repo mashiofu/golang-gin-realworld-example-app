@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -37,9 +38,23 @@ func RandInt() int {
 	return int(randNum.Int64())
 }
 
-// Keep this two config private, it should not expose to open source
-const JWTSecret = "A String Very Very Very Strong!!@##$!@#$"      // #nosec G101
+// devOnlyJWTSecret is used only as a fallback when the JWT_SECRET
+// environment variable is not set - i.e. plain `go run hello.go` on a dev
+// machine with no other config. Every real deployment (Docker Compose,
+// EKS) sets JWT_SECRET explicitly, sourced from Secrets Manager/SSM
+// Parameter Store via External Secrets Operator - see conduit-platform.
 const RandomPassword = "A String Very Very Very Random!!@##$!@#4" // #nosec G101
+const devOnlyJWTSecret = "A String Very Very Very Strong!!@##$!@#$" // #nosec G101 -- dev-only fallback, never reachable when JWT_SECRET is set
+
+// JWTSecret returns the HMAC signing/verification key for JWTs, read from
+// the JWT_SECRET environment variable when present, falling back to a
+// fixed dev-only value so local runs keep working with zero setup.
+func JWTSecret() string {
+	if secret := os.Getenv("JWT_SECRET"); secret != "" {
+		return secret
+	}
+	return devOnlyJWTSecret
+}
 
 // A Util function to generate jwt_token which can be used in the request header
 func GenToken(id uint) string {
@@ -48,7 +63,7 @@ func GenToken(id uint) string {
 		"exp": time.Now().Add(time.Hour * 24).Unix(),
 	})
 	// Sign and get the complete encoded token as a string
-	token, err := jwt_token.SignedString([]byte(JWTSecret))
+	token, err := jwt_token.SignedString([]byte(JWTSecret()))
 	if err != nil {
 		fmt.Printf("failed to sign JWT token for id %d: %v\n", id, err)
 		return ""

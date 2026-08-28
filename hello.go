@@ -3,12 +3,16 @@ package main
 import (
 	"log"
 	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/gothinkster/golang-gin-realworld-example-app/articles"
+	"github.com/gothinkster/golang-gin-realworld-example-app/cache"
 	"github.com/gothinkster/golang-gin-realworld-example-app/common"
+	"github.com/gothinkster/golang-gin-realworld-example-app/metrics"
 	"github.com/gothinkster/golang-gin-realworld-example-app/users"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"gorm.io/gorm"
 )
 
@@ -32,18 +36,34 @@ func main() {
 		defer sqlDB.Close()
 	}
 
+	cache.Init()
+
 	r := gin.Default()
+	r.Use(metrics.Middleware())
 
 	// Disable automatic redirect for trailing slashes
 	// This prevents POST body from being lost during redirects
 	r.RedirectTrailingSlash = false
 
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
 	v1 := r.Group("/api")
 	users.UsersRegister(v1.Group("/users"))
 	v1.Use(users.AuthMiddleware(false))
-	articles.ArticlesAnonymousRegister(v1.Group("/articles"))
-	articles.TagsAnonymousRegister(v1.Group("/tags"))
-	users.ProfileRetrieveRegister(v1.Group("/profiles"))
+
+	// Used by the cache middleware to tell "anonymous" and "authenticated"
+	// requests apart - AuthMiddleware(false) above has already populated
+	// my_user_model on the context by the time this runs.
+	isAuthenticated := func(c *gin.Context) bool {
+		return c.MustGet("my_user_model").(users.UserModel).ID != 0
+	}
+
+	// Article/profile responses are personalized per-viewer (favorited,
+	// following), so they're only cached for anonymous requests. /tags has
+	// no personalization at all, so it's cached for everyone.
+	articles.ArticlesAnonymousRegister(v1.Group("/articles", cache.Middleware(30*time.Second, true, isAuthenticated)))
+	articles.TagsAnonymousRegister(v1.Group("/tags", cache.Middleware(5*time.Minute, false, isAuthenticated)))
+	users.ProfileRetrieveRegister(v1.Group("/profiles", cache.Middleware(30*time.Second, true, isAuthenticated)))
 
 	v1.Use(users.AuthMiddleware(true))
 	users.UserRegister(v1.Group("/user"))
