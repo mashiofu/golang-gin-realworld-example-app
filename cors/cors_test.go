@@ -20,8 +20,7 @@ func newTestRouter() *gin.Engine {
 	return r
 }
 
-func TestMiddleware_NoOriginConfigured_AddsNoHeaders(t *testing.T) {
-	t.Setenv("FRONTEND_ORIGIN", "")
+func TestMiddleware_NoOriginHeader_AddsNoCORSHeaders(t *testing.T) {
 	r := newTestRouter()
 
 	w := httptest.NewRecorder()
@@ -35,27 +34,31 @@ func TestMiddleware_NoOriginConfigured_AddsNoHeaders(t *testing.T) {
 	}
 }
 
-func TestMiddleware_OriginConfigured_AddsHeadersOnRealRequest(t *testing.T) {
-	t.Setenv("FRONTEND_ORIGIN", "https://d123.cloudfront.net")
+func TestMiddleware_ReflectsWhicheverOriginSentTheRequest(t *testing.T) {
 	r := newTestRouter()
 
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ping", nil))
+	for _, origin := range []string{"https://d123.cloudfront.net", "http://k8s-default-frontend-abc.us-east-1.elb.amazonaws.com", "http://localhost:4200"} {
+		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+		req.Header.Set("Origin", origin)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
 
-	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "https://d123.cloudfront.net" {
-		t.Fatalf("expected Access-Control-Allow-Origin to be set, got %q", got)
-	}
-	if w.Code != http.StatusOK || w.Body.String() != "pong" {
-		t.Fatalf("expected the real handler to still run, got %d %q", w.Code, w.Body.String())
+		if got := w.Header().Get("Access-Control-Allow-Origin"); got != origin {
+			t.Fatalf("expected Access-Control-Allow-Origin to reflect %q, got %q", origin, got)
+		}
+		if got := w.Header().Get("Vary"); got != "Origin" {
+			t.Fatalf("expected Vary: Origin so no downstream cache mixes responses across origins, got %q", got)
+		}
 	}
 }
 
 func TestMiddleware_PreflightRequest_ShortCircuitsWithNoContent(t *testing.T) {
-	t.Setenv("FRONTEND_ORIGIN", "https://d123.cloudfront.net")
 	r := newTestRouter()
 
+	req := httptest.NewRequest(http.MethodOptions, "/ping", nil)
+	req.Header.Set("Origin", "https://d123.cloudfront.net")
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodOptions, "/ping", nil))
+	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("expected 204 on OPTIONS preflight, got %d", w.Code)
