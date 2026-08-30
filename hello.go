@@ -10,6 +10,7 @@ import (
 	"github.com/gothinkster/golang-gin-realworld-example-app/articles"
 	"github.com/gothinkster/golang-gin-realworld-example-app/cache"
 	"github.com/gothinkster/golang-gin-realworld-example-app/common"
+	"github.com/gothinkster/golang-gin-realworld-example-app/cors"
 	"github.com/gothinkster/golang-gin-realworld-example-app/metrics"
 	"github.com/gothinkster/golang-gin-realworld-example-app/users"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -40,6 +41,7 @@ func main() {
 
 	r := gin.Default()
 	r.Use(metrics.Middleware())
+	r.Use(cors.Middleware())
 
 	// Disable automatic redirect for trailing slashes
 	// This prevents POST body from being lost during redirects
